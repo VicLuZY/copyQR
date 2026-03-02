@@ -9,6 +9,7 @@
     .row { display: flex; gap: 16px; flex-wrap: wrap; align-items: flex-start; }
     .panel { border: 1px solid #ddd; border-radius: 10px; padding: 12px; }
     canvas, img { max-width: 420px; width: 100%; height: auto; background: #f7f7f7; border-radius: 8px; }
+    #outputCanvas { image-rendering: pixelated; image-rendering: crisp-edges; }
     button { padding: 10px 12px; border-radius: 10px; border: 1px solid #ccc; background: #fff; cursor: pointer; }
     button:disabled { opacity: 0.55; cursor: not-allowed; }
     input[type="number"], input[type="text"] { padding: 8px; border-radius: 10px; border: 1px solid #ccc; }
@@ -30,9 +31,6 @@
     <div style="display:flex; gap:12px; flex-wrap:wrap; align-items:center;">
       <label for="file">Choose image</label>
       <input id="file" type="file" accept="image/*" aria-label="Upload image containing a QR code" />
-      <label>Output size (px):
-        <input id="size" type="number" min="128" step="64" value="1024" />
-      </label>
       <button id="run" disabled aria-label="Reconstruct QR from current image">Reconstruct</button>
       <button id="download" disabled aria-label="Download reconstructed QR as PNG">Download PNG</button>
     </div>
@@ -76,17 +74,17 @@
   <script>
     // Tuning constants
     const MAX_DRAW_WIDTH = 900;
-    const OUTPUT_SIZE_MIN = 128;
-    const OUTPUT_SIZE_DEFAULT = 1024;
+    const INTERNAL_WARP_SIZE = 512;  // high-res warp before downsampling to modules
     const ADAPTIVE_BLOCK_SIZE = 31;
     const ADAPTIVE_THRESH_C = 5;
     const SAMPLE_QR_SIZE = 240;
     const OPENCV_INIT_TIMEOUT_MS = 15000;
     const SAMPLE_QR_READY_DELAY_MS = 80;
+    // Valid QR code dimensions (modules): 17+4*v for version v=1..40
+    const VALID_QR_MODULE_COUNTS = Array.from({ length: 40 }, (_, v) => 17 + 4 * (v + 1));
 
     const els = {
       file: document.getElementById('file'),
-      size: document.getElementById('size'),
       run: document.getElementById('run'),
       download: document.getElementById('download'),
       status: document.getElementById('status'),
@@ -124,6 +122,11 @@
       return ctx.getImageData(0, 0, canvas.width, canvas.height);
     }
 
+    // QR module count per side: version 1 = 21, version 2 = 25, ... (17 + 4*version)
+    function getModuleCountFromVersion(version) {
+      return 17 + 4 * (version || 1);
+    }
+
     function getCornersFromJsQR(imageData) {
       const code = jsQR(imageData.data, imageData.width, imageData.height, {
         inversionAttempts: "attemptBoth"
@@ -136,7 +139,9 @@
         loc.bottomRightCorner,
         loc.bottomLeftCorner
       ].map(p => ({ x: p.x, y: p.y }));
-      return { corners, data: code.data };
+      const version = code.version || 1;
+      const moduleCount = getModuleCountFromVersion(version);
+      return { corners, data: code.data, version, moduleCount };
     }
 
     function ensureCvReady() {
@@ -160,12 +165,14 @@
       return [tl, tr, br, bl];
     }
 
-    function reconstructWithOpenCV(inputCanvas, outputCanvas, corners, outSize) {
+    // Warps, binarizes, then downsamples to exactly moduleCount×moduleCount (one pixel per module).
+    function reconstructWithOpenCV(inputCanvas, outputCanvas, corners, moduleCount) {
       const src = cv.imread(inputCanvas); // RGBA
       const srcBgr = new cv.Mat();
       cv.cvtColor(src, srcBgr, cv.COLOR_RGBA2BGR);
 
       const ordered = orderCornersTLTRBRBL(corners);
+      const warpSize = INTERNAL_WARP_SIZE; // high-res warp, then downsample to moduleCount
 
       const srcTri = cv.matFromArray(4, 1, cv.CV_32FC2, [
         ordered[0][0], ordered[0][1],
@@ -176,14 +183,14 @@
 
       const dstTri = cv.matFromArray(4, 1, cv.CV_32FC2, [
         0, 0,
-        outSize - 1, 0,
-        outSize - 1, outSize - 1,
-        0, outSize - 1
+        warpSize - 1, 0,
+        warpSize - 1, warpSize - 1,
+        0, warpSize - 1
       ]);
 
       const M = cv.getPerspectiveTransform(srcTri, dstTri);
       const warped = new cv.Mat();
-      cv.warpPerspective(srcBgr, warped, M, new cv.Size(outSize, outSize), cv.INTER_LINEAR, cv.BORDER_CONSTANT, new cv.Scalar());
+      cv.warpPerspective(srcBgr, warped, M, new cv.Size(warpSize, warpSize), cv.INTER_LINEAR, cv.BORDER_CONSTANT, new cv.Scalar());
 
       const gray = new cv.Mat();
       cv.cvtColor(warped, gray, cv.COLOR_BGR2GRAY);
@@ -203,12 +210,28 @@
       const mean = cv.mean(bw)[0];
       if (mean < 127) cv.bitwise_not(bw, bw);
 
-      outputCanvas.width = outSize;
-      outputCanvas.height = outSize;
-      cv.imshow(outputCanvas, bw);
+      // Downsample to moduleCount×moduleCount: one pixel per module (center of each cell)
+      const out = new cv.Mat(moduleCount, moduleCount, cv.CV_8UC1);
+      const cellSize = warpSize / moduleCount;
+      for (let row = 0; row < moduleCount; row++) {
+        for (let col = 0; col < moduleCount; col++) {
+          const sy = Math.min(Math.floor((row + 0.5) * cellSize), warpSize - 1);
+          const sx = Math.min(Math.floor((col + 0.5) * cellSize), warpSize - 1);
+          const val = bw.ucharAt(sy, sx);
+          out.ucharPtr(row, col)[0] = val;
+        }
+      }
+
+      outputCanvas.width = moduleCount;
+      outputCanvas.height = moduleCount;
+      cv.imshow(outputCanvas, out);
+      // Scale display so the grid is visible (PNG download stays moduleCount×moduleCount)
+      const displayScale = Math.max(6, Math.min(12, Math.floor(280 / moduleCount)));
+      outputCanvas.style.width = (moduleCount * displayScale) + 'px';
+      outputCanvas.style.height = (moduleCount * displayScale) + 'px';
 
       src.delete(); srcBgr.delete(); srcTri.delete(); dstTri.delete(); M.delete();
-      warped.delete(); gray.delete(); blurred.delete(); bw.delete();
+      warped.delete(); gray.delete(); blurred.delete(); bw.delete(); out.delete();
     }
 
     function canvasToPngBlob(canvas) {
@@ -231,11 +254,11 @@
 
       showPayload(found.data);
 
-      const outSize = Math.max(OUTPUT_SIZE_MIN, Number(els.size.value || OUTPUT_SIZE_DEFAULT) | 0);
-      setStatus('Reconstructing (warp + binarize)…');
+      const moduleCount = found.moduleCount;
+      setStatus(`Reconstructing to ${moduleCount}×${moduleCount} (one pixel per module)…`);
 
       try {
-        reconstructWithOpenCV(els.inputCanvas, els.outputCanvas, found.corners, outSize);
+        reconstructWithOpenCV(els.inputCanvas, els.outputCanvas, found.corners, moduleCount);
       } catch (e) {
         console.error(e);
         els.run.disabled = false;
