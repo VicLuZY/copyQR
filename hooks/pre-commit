@@ -1,6 +1,6 @@
 #!/bin/sh
-# Update version in index.html to current date/time (commit time).
+# Update version in index.html to commit time: Version: (beta)yyyymmddhhmm
 # Install: cp hooks/pre-commit .git/hooks/pre-commit && chmod +x .git/hooks/pre-commit
-VERSION=$(date +%Y-%m-%d\ %H:%M:%S)
-sed -i "s/<span class=\"version\" id=\"version\">[^<]*<\/span>/<span class=\"version\" id=\"version\">$VERSION<\/span>/" index.html
+VERSION=$(date +%Y%m%d%H%M)
+sed -i "s/<span class=\"version\" id=\"version\">[^<]*<\/span>/<span class=\"version\" id=\"version\">Version: (beta)$VERSION<\/span>/" index.html
 git add index.html
