@@ -24,8 +24,7 @@
 <body>
   <h1>QR Reconstructor (Static, Serverless)</h1>
   <p class="hint">
-    Upload an image with a QR code. This detects the QR, straightens it, and reconstructs a clean black/white version.
-    Everything runs locally in your browser.
+    Upload an image with a QR code. The payload is decoded and a proper QR is generated from it (same version, valid encoding). Any logo or artifact in the original is replaced by the correct modules. Everything runs locally in your browser.
   </p>
 
   <div class="panel">
@@ -34,7 +33,7 @@
       <input id="file" type="file" accept="image/*" aria-label="Upload image containing a QR code" />
       <button id="run" disabled aria-label="Reconstruct QR from current image">Reconstruct</button>
       <button id="download" disabled aria-label="Download reconstructed QR as PNG">Download PNG</button>
-      <span class="version" id="version">2026-03-01 20:28:47</span>
+      <span class="version" id="version">2026-03-01 20:37:03</span>
     </div>
 
     <div class="status" id="status">Loading libraries…</div>
@@ -52,19 +51,21 @@
     </div>
   </div>
 
-  <!-- jsQR: QR detection with corner locations -->
+  <!-- jsQR: QR decode (payload + version) -->
   <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
 
-  <!-- OpenCV.js: warp + binarization -->
-  <script async src="https://docs.opencv.org/4.x/opencv.js"></script>
+  <!-- QR code generator: re-encode payload with same version/ECC -->
+  <script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js"></script>
 
   <script>
-    // Tuning constants
     const MAX_DRAW_WIDTH = 900;
-    const INTERNAL_WARP_SIZE = 512;  // high-res warp before downsampling to modules
-    const ADAPTIVE_BLOCK_SIZE = 31;
-    const ADAPTIVE_THRESH_C = 5;
-    const OPENCV_INIT_TIMEOUT_MS = 15000;
+
+    // UTF-8 encoding for payload (so Unicode matches what jsQR decoded)
+    if (typeof qrcode !== 'undefined') {
+      qrcode.stringToBytes = function(s) {
+        return Array.from(new TextEncoder().encode(s));
+      };
+    }
 
     const els = {
       file: document.getElementById('file'),
@@ -79,7 +80,6 @@
     let inputImageData = null;
     let reconstructedBlobUrl = null;
     let lastFileObjectUrl = null;
-    let opencvReady = false;
 
     function setStatus(msg) { els.status.textContent = msg; }
     function clearPayload() { els.payload.textContent = ''; }
@@ -124,94 +124,43 @@
       return { corners, data: code.data, version, moduleCount };
     }
 
-    function ensureCvReady() {
-      return new Promise((resolve, reject) => {
-        if (typeof cv === 'undefined') return reject(new Error('OpenCV failed to load.'));
-        if (cv && cv.Mat) return resolve();
-        const t = setTimeout(() => reject(new Error('OpenCV init timed out.')), OPENCV_INIT_TIMEOUT_MS);
-        cv['onRuntimeInitialized'] = () => { clearTimeout(t); resolve(); };
-      });
-    }
-
-    // Order corners as TL, TR, BR, BL (image coords, y down). Heuristic: min sum=TL, max sum=BR; max diff=TR, min diff=BL. Can be wrong for heavily rotated quads.
-    function orderCornersTLTRBRBL(pts) {
-      const arr = pts.map(p => [p.x, p.y]);
-      const sums = arr.map(p => p[0] + p[1]);
-      const diffs = arr.map(p => p[0] - p[1]);
-      const tl = arr[sums.indexOf(Math.min(...sums))];
-      const br = arr[sums.indexOf(Math.max(...sums))];
-      const tr = arr[diffs.indexOf(Math.max(...diffs))];
-      const bl = arr[diffs.indexOf(Math.min(...diffs))];
-      return [tl, tr, br, bl];
-    }
-
-    // Warps, binarizes, then downsamples to exactly moduleCount×moduleCount (one pixel per module).
-    function reconstructWithOpenCV(inputCanvas, outputCanvas, corners, moduleCount) {
-      const src = cv.imread(inputCanvas); // RGBA
-      const srcBgr = new cv.Mat();
-      cv.cvtColor(src, srcBgr, cv.COLOR_RGBA2BGR);
-
-      const ordered = orderCornersTLTRBRBL(corners);
-      const warpSize = INTERNAL_WARP_SIZE; // high-res warp, then downsample to moduleCount
-
-      const srcTri = cv.matFromArray(4, 1, cv.CV_32FC2, [
-        ordered[0][0], ordered[0][1],
-        ordered[1][0], ordered[1][1],
-        ordered[2][0], ordered[2][1],
-        ordered[3][0], ordered[3][1],
-      ]);
-
-      const dstTri = cv.matFromArray(4, 1, cv.CV_32FC2, [
-        0, 0,
-        warpSize - 1, 0,
-        warpSize - 1, warpSize - 1,
-        0, warpSize - 1
-      ]);
-
-      const M = cv.getPerspectiveTransform(srcTri, dstTri);
-      const warped = new cv.Mat();
-      cv.warpPerspective(srcBgr, warped, M, new cv.Size(warpSize, warpSize), cv.INTER_LINEAR, cv.BORDER_CONSTANT, new cv.Scalar());
-
-      const gray = new cv.Mat();
-      cv.cvtColor(warped, gray, cv.COLOR_BGR2GRAY);
-
-      const blurred = new cv.Mat();
-      cv.GaussianBlur(gray, blurred, new cv.Size(3, 3), 0);
-
-      const bw = new cv.Mat();
-      cv.adaptiveThreshold(
-        blurred, bw, 255,
-        cv.ADAPTIVE_THRESH_GAUSSIAN_C,
-        cv.THRESH_BINARY,
-        ADAPTIVE_BLOCK_SIZE,
-        ADAPTIVE_THRESH_C
-      );
-
-      const mean = cv.mean(bw)[0];
-      if (mean < 127) cv.bitwise_not(bw, bw);
-
-      // Downsample to moduleCount×moduleCount: one pixel per module (center of each cell)
-      const out = new cv.Mat(moduleCount, moduleCount, cv.CV_8UC1);
-      const cellSize = warpSize / moduleCount;
-      for (let row = 0; row < moduleCount; row++) {
-        for (let col = 0; col < moduleCount; col++) {
-          const sy = Math.min(Math.floor((row + 0.5) * cellSize), warpSize - 1);
-          const sx = Math.min(Math.floor((col + 0.5) * cellSize), warpSize - 1);
-          const val = bw.ucharAt(sy, sx);
-          out.ucharPtr(row, col)[0] = val;
+    // Generate a proper QR from payload with same version; try ECC levels until one fits.
+    function generateQrFromPayload(data, version) {
+      const eccLevels = ['L', 'M', 'Q', 'H'];
+      const typeNumber = Math.max(1, Math.min(40, version || 1));
+      for (const ecc of eccLevels) {
+        try {
+          const qr = qrcode(typeNumber, ecc);
+          qr.addData(data, 'Byte');
+          qr.make();
+          return qr;
+        } catch (e) {
+          continue;
         }
       }
+      return null;
+    }
 
-      outputCanvas.width = moduleCount;
-      outputCanvas.height = moduleCount;
-      cv.imshow(outputCanvas, out);
-      // Scale display so the grid is visible (PNG download stays moduleCount×moduleCount)
-      const displayScale = Math.max(6, Math.min(12, Math.floor(280 / moduleCount)));
-      outputCanvas.style.width = (moduleCount * displayScale) + 'px';
-      outputCanvas.style.height = (moduleCount * displayScale) + 'px';
-
-      src.delete(); srcBgr.delete(); srcTri.delete(); dstTri.delete(); M.delete();
-      warped.delete(); gray.delete(); blurred.delete(); bw.delete(); out.delete();
+    // Draw generated QR to canvas: one pixel per module (no artifacts; logo areas become correct data/white).
+    function drawQrToCanvas(qr, outputCanvas) {
+      const n = qr.getModuleCount();
+      outputCanvas.width = n;
+      outputCanvas.height = n;
+      const ctx = outputCanvas.getContext('2d');
+      const imageData = ctx.createImageData(n, n);
+      const data = imageData.data;
+      for (let row = 0; row < n; row++) {
+        for (let col = 0; col < n; col++) {
+          const dark = qr.isDark(row, col);
+          const i = (row * n + col) * 4;
+          data[i] = data[i + 1] = data[i + 2] = dark ? 0 : 255;
+          data[i + 3] = 255;
+        }
+      }
+      ctx.putImageData(imageData, 0, 0);
+      const displayScale = Math.max(6, Math.min(12, Math.floor(280 / n)));
+      outputCanvas.style.width = (n * displayScale) + 'px';
+      outputCanvas.style.height = (n * displayScale) + 'px';
     }
 
     function canvasToPngBlob(canvas) {
@@ -234,16 +183,14 @@
 
       showPayload(found.data);
 
-      const moduleCount = found.moduleCount;
-      setStatus(`Reconstructing to ${moduleCount}×${moduleCount} (one pixel per module)…`);
+      setStatus('Reconstructing from payload (same version, proper QR)…');
 
-      try {
-        reconstructWithOpenCV(els.inputCanvas, els.outputCanvas, found.corners, moduleCount);
-      } catch (e) {
-        console.error(e);
+      const qr = generateQrFromPayload(found.data, found.version);
+      if (!qr) {
         els.run.disabled = false;
-        return setStatus('Failed during reconstruction. Try a different image.');
+        return setStatus('Payload too long for this QR version. Cannot reconstruct.');
       }
+      drawQrToCanvas(qr, els.outputCanvas);
 
       setStatus('Done.');
       els.run.disabled = false;
@@ -304,16 +251,7 @@
     els.download.addEventListener('click', handleDownload);
 
     // Init
-    (async () => {
-      try {
-        await ensureCvReady();
-        opencvReady = true;
-        setStatus('Ready. Upload an image.');
-      } catch (e) {
-        console.error(e);
-        setStatus('OpenCV failed to load. Check your network or try another browser.');
-      }
-    })();
+    setStatus('Ready. Upload an image.');
   </script>
 </body>
 </html>
