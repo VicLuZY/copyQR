@@ -33,10 +33,11 @@
       <input id="file" type="file" accept="image/*" aria-label="Upload image containing a QR code" />
       <button id="run" disabled aria-label="Reconstruct QR from current image">Reconstruct</button>
       <button id="download" disabled aria-label="Download reconstructed QR as PNG">Download PNG</button>
-      <span class="version" id="version">2026-03-01 20:37:03</span>
+      <span class="version" id="version">2026-03-01 20:42:53</span>
     </div>
 
     <div class="status" id="status">Loading libraries…</div>
+    <noscript><p class="hint">This app needs JavaScript. Enable it or open the page over https (e.g. GitHub Pages).</p></noscript>
     <div class="status mono" id="payload"></div>
   </div>
 
@@ -52,13 +53,15 @@
   </div>
 
   <!-- jsQR: QR decode (payload + version) -->
-  <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
-
+  <script src="https://unpkg.com/jsqr@1.4.0/dist/jsQR.js"></script>
   <!-- QR code generator: re-encode payload with same version/ECC -->
-  <script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js"></script>
-
+  <script src="https://unpkg.com/qrcode-generator@1.4.4/qrcode.js"></script>
   <script>
     const MAX_DRAW_WIDTH = 900;
+
+    if (typeof jsQR === 'undefined' || typeof qrcode === 'undefined') {
+      document.getElementById('status').textContent = 'Libraries failed to load. Serve over https (e.g. GitHub Pages) or check network.';
+    } else {
 
     // UTF-8 encoding for payload (so Unicode matches what jsQR decoded)
     if (typeof qrcode !== 'undefined') {
@@ -252,6 +255,7 @@
 
     // Init
     setStatus('Ready. Upload an image.');
+    }
   </script>
 </body>
 </html>
