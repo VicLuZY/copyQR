@@ -18,12 +18,13 @@
     .hint { color: #555; font-size: 0.95rem; line-height: 1.35; }
     .status { margin-top: 10px; color: #333; }
     .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.95rem; }
+    .version { margin-left: auto; color: #888; font-size: 0.85rem; }
   </style>
 </head>
 <body>
   <h1>QR Reconstructor (Static, Serverless)</h1>
   <p class="hint">
-    Upload an image with a QR code (or generate a sample). This detects the QR, straightens it, and reconstructs a clean black/white version.
+    Upload an image with a QR code. This detects the QR, straightens it, and reconstructs a clean black/white version.
     Everything runs locally in your browser.
   </p>
 
@@ -33,11 +34,7 @@
       <input id="file" type="file" accept="image/*" aria-label="Upload image containing a QR code" />
       <button id="run" disabled aria-label="Reconstruct QR from current image">Reconstruct</button>
       <button id="download" disabled aria-label="Download reconstructed QR as PNG">Download PNG</button>
-    </div>
-
-    <div style="display:flex; gap:12px; flex-wrap:wrap; align-items:center; margin-top:10px;">
-      <input id="sampleText" type="text" value="https://example.com/hello?q=123" aria-label="Text or URL for sample QR code" />
-      <button id="makeSample" disabled aria-label="Generate sample QR from text above">Generate sample QR</button>
+      <span class="version" id="version">2026-03-01 20:22:15</span>
     </div>
 
     <div class="status" id="status">Loading libraries…</div>
@@ -53,13 +50,6 @@
       <h3 style="margin:0 0 8px 0;">Reconstructed</h3>
       <canvas id="outputCanvas"></canvas>
     </div>
-    <div class="panel">
-      <h3 style="margin:0 0 8px 0;">Sample generator</h3>
-      <div id="sampleWrap" style="width:260px;height:260px;display:flex;align-items:center;justify-content:center;background:#f7f7f7;border-radius:8px;"></div>
-      <p class="hint" style="max-width:420px;margin:10px 0 0 0;">
-        This makes a QR in-page, draws it into the input canvas, then you can reconstruct it.
-      </p>
-    </div>
   </div>
 
   <!-- jsQR: QR detection with corner locations -->
@@ -68,20 +58,13 @@
   <!-- OpenCV.js: warp + binarization -->
   <script async src="https://docs.opencv.org/4.x/opencv.js"></script>
 
-  <!-- QR generator for the self-test -->
-  <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
-
   <script>
     // Tuning constants
     const MAX_DRAW_WIDTH = 900;
     const INTERNAL_WARP_SIZE = 512;  // high-res warp before downsampling to modules
     const ADAPTIVE_BLOCK_SIZE = 31;
     const ADAPTIVE_THRESH_C = 5;
-    const SAMPLE_QR_SIZE = 240;
     const OPENCV_INIT_TIMEOUT_MS = 15000;
-    const SAMPLE_QR_READY_DELAY_MS = 80;
-    // Valid QR code dimensions (modules): 17+4*v for version v=1..40
-    const VALID_QR_MODULE_COUNTS = Array.from({ length: 40 }, (_, v) => 17 + 4 * (v + 1));
 
     const els = {
       file: document.getElementById('file'),
@@ -91,9 +74,6 @@
       payload: document.getElementById('payload'),
       inputCanvas: document.getElementById('inputCanvas'),
       outputCanvas: document.getElementById('outputCanvas'),
-      makeSample: document.getElementById('makeSample'),
-      sampleText: document.getElementById('sampleText'),
-      sampleWrap: document.getElementById('sampleWrap'),
     };
 
     let inputImageData = null;
@@ -242,7 +222,7 @@
       clearPayload();
       revokeDownloadUrl();
 
-      if (!inputImageData) return setStatus('Please upload an image or generate a sample first.');
+      if (!inputImageData) return setStatus('Please upload an image first.');
 
       els.run.disabled = true;
       setStatus('Detecting QR code…');
@@ -283,45 +263,6 @@
       a.remove();
     }
 
-    function makeSampleQr(text) {
-      els.sampleWrap.innerHTML = '';
-      // qrcodejs renders a canvas or img; we’ll grab the canvas.
-      const qr = new QRCode(els.sampleWrap, {
-        text,
-        width: SAMPLE_QR_SIZE,
-        height: SAMPLE_QR_SIZE,
-        correctLevel: QRCode.CorrectLevel.M
-      });
-
-      // qrcodejs appends asynchronously; short delay so canvas/img is in DOM before we read it
-      setTimeout(() => {
-        const canvas = els.sampleWrap.querySelector('canvas');
-        const img = els.sampleWrap.querySelector('img');
-
-        if (canvas) {
-          const dataUrl = canvas.toDataURL('image/png');
-          const im = new Image();
-          im.onload = () => {
-            inputImageData = drawImageToCanvas(im, els.inputCanvas);
-            els.run.disabled = false;
-            els.download.disabled = true;
-            setStatus('Sample QR generated. Click Reconstruct.');
-          };
-          im.src = dataUrl;
-        } else if (img) {
-          const im = new Image();
-          im.onload = () => {
-            inputImageData = drawImageToCanvas(im, els.inputCanvas);
-            els.run.disabled = false;
-            els.download.disabled = true;
-            setStatus('Sample QR generated. Click Reconstruct.');
-          };
-          im.src = img.src;
-        } else {
-          setStatus('Sample generation failed.');
-        }
-      }, SAMPLE_QR_READY_DELAY_MS);
-    }
 
     // Upload path
     els.file.addEventListener('change', (e) => {
@@ -361,20 +302,13 @@
     // Buttons
     els.run.addEventListener('click', handleReconstruct);
     els.download.addEventListener('click', handleDownload);
-    els.makeSample.addEventListener('click', () => {
-      clearPayload();
-      revokeDownloadUrl();
-      els.download.disabled = true;
-      makeSampleQr(els.sampleText.value || 'hello');
-    });
 
     // Init
     (async () => {
       try {
         await ensureCvReady();
         opencvReady = true;
-        setStatus('Ready. Upload an image or generate a sample.');
-        els.makeSample.disabled = false;
+        setStatus('Ready. Upload an image.');
       } catch (e) {
         console.error(e);
         setStatus('OpenCV failed to load. Check your network or try another browser.');
