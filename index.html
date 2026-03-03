@@ -33,7 +33,7 @@
       <input id="file" type="file" accept="image/*" aria-label="Upload image containing a QR code" />
       <button id="run" disabled aria-label="Reconstruct QR from current image">Reconstruct</button>
       <button id="download" disabled aria-label="Download reconstructed QR as PNG">Download PNG</button>
-      <span class="version" id="version">2026-03-02 07:58:07</span>
+      <span class="version" id="version">2026-03-02 19:54:19</span>
     </div>
 
     <div class="status" id="status">Loading libraries…</div>
@@ -144,26 +144,35 @@
       return null;
     }
 
-    // Draw generated QR to canvas: one pixel per module (no artifacts; logo areas become correct data/white).
+    // Draw generated QR to canvas: 10x10 pixels per module (no artifacts; logo areas become correct data/white).
+    const PIXELS_PER_MODULE = 10;
     function drawQrToCanvas(qr, outputCanvas) {
       const n = qr.getModuleCount();
-      outputCanvas.width = n;
-      outputCanvas.height = n;
+      const size = n * PIXELS_PER_MODULE;
+      outputCanvas.width = size;
+      outputCanvas.height = size;
       const ctx = outputCanvas.getContext('2d');
-      const imageData = ctx.createImageData(n, n);
+      const imageData = ctx.createImageData(size, size);
       const data = imageData.data;
-      for (let row = 0; row < n; row++) {
-        for (let col = 0; col < n; col++) {
-          const dark = qr.isDark(row, col);
-          const i = (row * n + col) * 4;
-          data[i] = data[i + 1] = data[i + 2] = dark ? 0 : 255;
-          data[i + 3] = 255;
+      for (let qrRow = 0; qrRow < n; qrRow++) {
+        for (let qrCol = 0; qrCol < n; qrCol++) {
+          const dark = qr.isDark(qrRow, qrCol);
+          const r = dark ? 0 : 255;
+          for (let dy = 0; dy < PIXELS_PER_MODULE; dy++) {
+            for (let dx = 0; dx < PIXELS_PER_MODULE; dx++) {
+              const y = qrRow * PIXELS_PER_MODULE + dy;
+              const x = qrCol * PIXELS_PER_MODULE + dx;
+              const i = (y * size + x) * 4;
+              data[i] = data[i + 1] = data[i + 2] = r;
+              data[i + 3] = 255;
+            }
+          }
         }
       }
       ctx.putImageData(imageData, 0, 0);
-      const displayScale = Math.max(6, Math.min(12, Math.floor(280 / n)));
-      outputCanvas.style.width = (n * displayScale) + 'px';
-      outputCanvas.style.height = (n * displayScale) + 'px';
+      const displayScale = Math.max(1, Math.min(3, Math.floor(280 / size)));
+      outputCanvas.style.width = (size * displayScale) + 'px';
+      outputCanvas.style.height = (size * displayScale) + 'px';
     }
 
     function canvasToPngBlob(canvas) {
