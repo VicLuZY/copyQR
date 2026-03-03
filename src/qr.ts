@@ -2,7 +2,7 @@ import jsQR from 'jsqr';
 import qrcode from 'qrcode-generator';
 
 const MAX_DRAW_WIDTH = 900;
-const PIXELS_PER_MODULE = 10;
+const PIXELS_PER_MODULE = 100;
 
 // UTF-8 encoding for payload (so Unicode matches what jsQR decoded)
 qrcode.stringToBytes = (s: string): number[] =>
