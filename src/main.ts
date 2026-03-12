@@ -1,6 +1,7 @@
 import {
   decodeFromImageData,
   generateQrFromPayload,
+  generateQrFromChunks,
   drawQrToCanvas,
   drawImageToCanvas,
   canvasToPngBlob,
@@ -40,8 +41,17 @@ function clearPayload(els: Elements): void {
   els.payload.textContent = '';
 }
 
-function showPayload(els: Elements, text: string): void {
-  els.payload.textContent = text ? `Decoded payload: ${text}` : '';
+function showPayload(
+  els: Elements,
+  text: string,
+  ecc?: string,
+  dataMask?: number
+): void {
+  const parts: string[] = [];
+  if (text) parts.push(`Payload: ${text}`);
+  if (ecc) parts.push(`ECC: ${ecc}`);
+  if (dataMask !== undefined) parts.push(`Mask: ${dataMask}`);
+  els.payload.textContent = parts.length ? parts.join(' · ') : '';
 }
 
 function revokeDownloadUrl(): void {
@@ -78,10 +88,18 @@ async function handleReconstruct(els: Elements): Promise<void> {
     return;
   }
 
-  showPayload(els, found.data);
+  showPayload(
+    els,
+    found.data,
+    found.errorCorrectionLevel,
+    found.dataMask
+  );
   setStatus(els, 'Reconstructing from payload (same version, proper QR)…');
 
-  const qr = generateQrFromPayload(found.data, found.version);
+  const qr =
+    found.chunks && found.chunks.length > 0
+      ? generateQrFromChunks(found.chunks, found.version, found.errorCorrectionLevel)
+      : generateQrFromPayload(found.data, found.version, found.errorCorrectionLevel);
   if (!qr) {
     els.run.disabled = false;
     setStatus(els, 'Payload too long for this QR version. Cannot reconstruct.');

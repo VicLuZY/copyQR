@@ -26,6 +26,9 @@
   <p class="hint">
     Upload an image with a QR code. The payload is decoded and a proper QR is generated from it (same version, valid encoding). Any logo or artifact in the original is replaced by the correct modules. Everything runs locally in your browser.
   </p>
+  <p class="hint" id="why-different">
+    The reconstructed QR may look different from the original because the scanner only gives us the decoded text and version—not the original error-correction level, mask pattern, or exact encoding segments. So we re-encode with a valid choice of those; the content and version match, but the pattern can differ.
+  </p>
 
   <div class="panel">
     <div style="display:flex; gap:12px; flex-wrap:wrap; align-items:center;">
@@ -33,7 +36,7 @@
       <input id="file" type="file" accept="image/*" aria-label="Upload image containing a QR code" />
       <button id="run" disabled aria-label="Reconstruct QR from current image">Reconstruct</button>
       <button id="download" disabled aria-label="Download reconstructed QR as PNG">Download PNG</button>
-      <span class="version" id="version">2026-03-02 22:58:26</span>
+      <span class="version" id="version">2026-03-11 20:20:49</span>
     </div>
 
     <div class="status" id="status">Loading…</div>

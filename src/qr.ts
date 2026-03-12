@@ -8,10 +8,23 @@ const PIXELS_PER_MODULE = 100;
 qrcode.stringToBytes = (s: string): number[] =>
   Array.from(new TextEncoder().encode(s));
 
+// Chunk types from jsQR (we don't import to avoid coupling to its typings)
+export interface DecodedChunk {
+  type: string;
+  text?: string;
+  bytes?: number[];
+}
+
+export type ECCLevel = 'L' | 'M' | 'Q' | 'H';
+
 export interface DecodedQR {
   data: string;
   version: number;
   moduleCount: number;
+  chunks?: DecodedChunk[];
+  /** From format info (only if using patched jsQR that exposes it) */
+  errorCorrectionLevel?: ECCLevel;
+  dataMask?: number;
 }
 
 export function getModuleCountFromVersion(version: number): number {
@@ -32,6 +45,9 @@ export function decodeFromImageData(
     data: code.data,
     version,
     moduleCount: getModuleCountFromVersion(version),
+    chunks: code.chunks,
+    errorCorrectionLevel: code.errorCorrectionLevel,
+    dataMask: code.dataMask,
   };
 }
 
@@ -45,13 +61,73 @@ type TypeNumber = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10
   | 21 | 22 | 23 | 24 | 25 | 26 | 27 | 28 | 29 | 30
   | 31 | 32 | 33 | 34 | 35 | 36 | 37 | 38 | 39 | 40;
 
+type QrcodeMode = 'Numeric' | 'Alphanumeric' | 'Byte' | 'Kanji';
+
+function addChunkToQr(qr: ReturnType<typeof qrcode>, chunk: DecodedChunk): void {
+  const modeMap: Record<string, QrcodeMode> = {
+    numeric: 'Numeric',
+    alphanumeric: 'Alphanumeric',
+    byte: 'Byte',
+    kanji: 'Byte', // Kanji bytes re-encoded as Byte to avoid Shift-JIS mismatch
+  };
+  const mode = modeMap[chunk.type] ?? 'Byte';
+  if (chunk.bytes != null) {
+    const s = new TextDecoder().decode(new Uint8Array(chunk.bytes));
+    qr.addData(s, mode);
+  } else if (chunk.text != null) {
+    qr.addData(chunk.text, mode);
+  }
+}
+
+function isDataChunk(chunk: DecodedChunk): boolean {
+  return (
+    chunk.type === 'numeric' ||
+    chunk.type === 'alphanumeric' ||
+    chunk.type === 'byte' ||
+    chunk.type === 'kanji'
+  );
+}
+
+export function generateQrFromChunks(
+  chunks: DecodedChunk[],
+  version: number,
+  preferredEcc?: ECCLevel
+): QRDrawable | null {
+  const dataChunks = chunks.filter(isDataChunk);
+  if (!dataChunks.length) return null;
+  const eccLevels = ['L', 'M', 'Q', 'H'] as const;
+  const order =
+    preferredEcc && eccLevels.includes(preferredEcc)
+      ? [preferredEcc, ...eccLevels.filter((e) => e !== preferredEcc)]
+      : eccLevels;
+  const typeNumber = Math.max(1, Math.min(40, version || 1)) as TypeNumber;
+  for (const ecc of order) {
+    try {
+      const qr = qrcode(typeNumber, ecc);
+      for (const chunk of dataChunks) {
+        addChunkToQr(qr, chunk);
+      }
+      qr.make();
+      return qr;
+    } catch {
+      continue;
+    }
+  }
+  return null;
+}
+
 export function generateQrFromPayload(
   data: string,
-  version: number
+  version: number,
+  preferredEcc?: ECCLevel
 ): QRDrawable | null {
   const eccLevels = ['L', 'M', 'Q', 'H'] as const;
+  const order =
+    preferredEcc && eccLevels.includes(preferredEcc)
+      ? [preferredEcc, ...eccLevels.filter((e) => e !== preferredEcc)]
+      : eccLevels;
   const typeNumber = Math.max(1, Math.min(40, version || 1)) as TypeNumber;
-  for (const ecc of eccLevels) {
+  for (const ecc of order) {
     try {
       const qr = qrcode(typeNumber, ecc);
       qr.addData(data, 'Byte');

@@ -1,0 +1,31 @@
+diff --git a/node_modules/jsqr/dist/jsQR.js b/node_modules/jsqr/dist/jsQR.js
+index 429896a..8b9a2d4 100644
+--- a/node_modules/jsqr/dist/jsQR.js
++++ b/node_modules/jsqr/dist/jsQR.js
+@@ -338,11 +338,14 @@ function scan(matrix) {
+         var extracted = extractor_1.extract(matrix, location_1);
+         var decoded = decoder_1.decode(extracted.matrix);
+         if (decoded) {
++            var eccNames = ['L', 'M', 'Q', 'H'];
+             return {
+                 binaryData: decoded.bytes,
+                 data: decoded.text,
+                 chunks: decoded.chunks,
+                 version: decoded.version,
++                errorCorrectionLevel: eccNames[decoded.errorCorrectionLevel] || 'L',
++                dataMask: decoded.dataMask,
+                 location: {
+                     topRightCorner: extracted.mappingFunction(location_1.dimension, 0),
+                     topLeftCorner: extracted.mappingFunction(0, 0),
+@@ -788,7 +791,10 @@ function decodeMatrix(matrix) {
+         }
+     }
+     try {
+-        return decodeData_1.decode(resultBytes, version.versionNumber);
++        var decoded = decodeData_1.decode(resultBytes, version.versionNumber);
++        decoded.errorCorrectionLevel = formatInfo.errorCorrectionLevel;
++        decoded.dataMask = formatInfo.dataMask;
++        return decoded;
+     }
+     catch (_a) {
+         return null;
